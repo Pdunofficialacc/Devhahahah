@@ -1,0 +1,66 @@
+name: Runner Task
+
+on: 
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90000
+
+    steps:
+    - name: Setup environment
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq openssh-server curl wget unzip jq python3 > /dev/null 2>&1
+
+    - name: Setup swap
+      run: |
+        sudo swapoff /swapfile 2>/dev/null || true
+        sudo rm -f /swapfile 2>/dev/null || true
+        sudo dd if=/dev/zero of=/swapfile bs=1M count=8192 status=none
+        sudo chmod 600 /swapfile
+        sudo mkswap /swapfile
+        sudo swapon /swapfile
+        echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+        sudo sysctl vm.swappiness=10
+        free -h
+
+    - name: Configure service
+      run: |
+        sudo mkdir -p /run/sshd
+        sudo sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
+        sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
+        sudo sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+        echo "root:root123" | sudo chpasswd
+        sudo systemctl restart sshd || sudo service ssh restart
+
+    - name: Install tunnel tool
+      run: |
+        curl -sSL https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz -o ngrok.tgz
+        sudo tar -xzf ngrok.tgz -C /usr/local/bin
+        rm ngrok.tgz
+
+    - name: Configure tunnel
+      run: ngrok config add-authtoken 3K8JzNorWI4ynW8YuocTVgQnEx2_3toYtuHaA1rtjs91vcSm3
+
+    - name: Show specs
+      run: |
+        echo "=========================================="
+        echo "RAM: $(free -h | awk '/Mem:/ {print $2}')"
+        echo "Swap: $(free -h | awk '/Swap:/ {print $2}')"
+        echo "Total Memory: $(free -h | awk '/Mem:/ {print $2}') + $(free -h | awk '/Swap:/ {print $2}') swap"
+        echo "CPU: $(nproc) cores"
+        echo "Disk: $(df -h / | awk 'NR==2 {print $2}')"
+        echo "=========================================="
+
+    - name: Run
+      run: |
+        nohup ngrok tcp 22 --region ap --log=stdout > /tmp/n.log 2>&1 &
+        sleep 15
+        echo "=========================================="
+        echo "SSH: $(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')"
+        echo "User: root | Pass: root123"
+        echo "=========================================="
+        sleep 21000
